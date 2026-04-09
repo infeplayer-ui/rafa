@@ -160,8 +160,8 @@ async def on_message(message: discord.Message):
         comp_str = "\nNesse tempo dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
 
         await canal.send(
-            f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** \n"
-            f"(total hoje: **{formatar_duracao(total_hoje)}**)"
+            f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** "
+            f"(total hoje: **{formatar_duracao(total_hoje)}**)\n"
             f"{comp_str}"
         )
 
