@@ -139,10 +139,30 @@ async def on_message(message: discord.Message):
         jogo       = sessao["jogo"]
         parcial    = agora - sessao["inicio"]
         total_hoje = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
+        horas      = total_hoje.total_seconds() / 3600
+
+        # Comparações
+        livros    = horas / 6
+        filmes    = horas / 2
+        km        = horas * 5
+        trabalho  = horas / 8
+
+        comparacoes = []
+        if livros >= 0.1:
+            comparacoes.append(f"📚 ler **{livros:.1f} livros**")
+        if filmes >= 0.1:
+            comparacoes.append(f"🎬 ver **{filmes:.1f} filmes**")
+        if km >= 0.5:
+            comparacoes.append(f"🚶 andar **{km:.1f} km** a pé")
+        if trabalho >= 0.1:
+            comparacoes.append(f"💼 **{trabalho:.1f} dias** de trabalho full-time")
+
+        comp_str = "\nNesse tempo dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
 
         await canal.send(
             f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** "
             f"(total hoje: **{formatar_duracao(total_hoje)}**)"
+            f"{comp_str}"
         )
 
 
