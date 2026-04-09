@@ -121,50 +121,57 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot or message.content.lower() != "!check":
+    if message.author.bot:
         return
 
-    agora = datetime.now(timezone.utc).replace(tzinfo=None)
-    canal = message.channel
+    # ── !check ────────────────────────────────────────────────────────────────
+    if message.content.lower() == "!check":
+        agora = datetime.now(timezone.utc).replace(tzinfo=None)
+        canal = message.channel
 
-    for uid in MONITORIZAR:
-        membro = message.guild.get_member(uid) if message.guild else None
-        nome   = membro.display_name if membro else f"<@{uid}>"
+        for uid in MONITORIZAR:
+            membro = message.guild.get_member(uid) if message.guild else None
+            nome   = membro.display_name if membro else f"<@{uid}>"
 
-        if uid not in sessoes_ativas:
-            await canal.send(f"**{nome}** não está a jogar nada agora.")
-            return
+            if uid not in sessoes_ativas:
+                await canal.send(f"**{nome}** não está a jogar nada agora.")
+                return
 
-        sessao     = sessoes_ativas[uid]
-        jogo       = sessao["jogo"]
-        parcial    = agora - sessao["inicio"]
-        total_hoje = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
-        horas      = total_hoje.total_seconds() / 3600
+            sessao     = sessoes_ativas[uid]
+            jogo       = sessao["jogo"]
+            parcial    = agora - sessao["inicio"]
+            total_hoje = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
+            horas      = total_hoje.total_seconds() / 3600
 
-        # Comparações
-        livros    = horas / 6
-        filmes    = horas / 2
-        km        = horas * 5
-        trabalho  = horas / 8
+            livros   = horas / 6
+            filmes   = horas / 2
+            km       = horas * 5
+            trabalho = horas / 8
 
-        comparacoes = []
-        if livros >= 0.1:
-            comparacoes.append(f"📚 ler **{livros:.1f} livros**")
-        if filmes >= 0.1:
-            comparacoes.append(f"🎬 ver **{filmes:.1f} filmes**")
-        if km >= 0.5:
-            comparacoes.append(f"🚶 andar **{km:.1f} km** a pé")
-        if trabalho >= 0.1:
-            comparacoes.append(f"💼 **{trabalho:.1f} dias** de trabalho full-time")
+            comparacoes = []
+            if livros >= 0.1:
+                comparacoes.append(f"📚 ler **{livros:.1f} livros**")
+            if filmes >= 0.1:
+                comparacoes.append(f"🎬 ver **{filmes:.1f} filmes**")
+            if km >= 0.5:
+                comparacoes.append(f"🚶 andar **{km:.1f} km** a pé")
+            if trabalho >= 0.1:
+                comparacoes.append(f"💼 **{trabalho:.1f} dias** de trabalho full-time")
 
-        comp_str = "\nNesse tempo dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
+            comp_str = "\nNesse tempo dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
 
-        await canal.send(
-            f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** "
-            f"(total hoje: **{formatar_duracao(total_hoje)}**)\n"
-            f"{comp_str}"
-        )
+            await canal.send(
+                f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** "
+                f"(total hoje: **{formatar_duracao(total_hoje)}**) \n"
+                f"{comp_str}"
+            )
 
+    # ── !clear ────────────────────────────────────────────────────────────────
+    elif message.content.lower() == "!clear":
+        await message.channel.purge()
+        confirmacao = await message.channel.send("🗑️ Chat limpo!")
+        await asyncio.sleep(3)
+        await confirmacao.delete()
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
