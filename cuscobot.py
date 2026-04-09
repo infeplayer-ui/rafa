@@ -169,9 +169,6 @@ async def on_message(message: discord.Message):
     # ── !clear ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!clear":
         await message.channel.purge()
-        confirmacao = await message.channel.send("🗑️ Chat limpo!")
-        await asyncio.sleep(3)
-        await confirmacao.delete()
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
