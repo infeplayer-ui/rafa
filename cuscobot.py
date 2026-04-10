@@ -14,7 +14,10 @@ CANAL_ID       = 1491902094603452589
 RESUMO_HORA    = 22
 RESUMO_MINUTO  = 0
 MONITORIZAR    = {448949606257131530}
-LISTA_NEGRA    = {175335831899209728} 
+LISTA_NEGRA = {
+    175335831899209728: "Caladinho, tens dois filhos",
+    175668435240353792: "Caladinho, tu comes gordas",
+}
 # ──────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -126,10 +129,9 @@ async def on_message(message: discord.Message):
         return
 
     # ── Lista negra ───────────────────────────────────────────────────────────
-    if message.author.id in LISTA_NEGRA:
-        await message.channel.send("Caladinho, tens dois filhos")
-        return
-
+   if message.author.id in LISTA_NEGRA:
+    await message.channel.send(LISTA_NEGRA[message.author.id])
+    return
     # ── !check ────────────────────────────────────────────────────────────────
     if message.content.lower() == "!check":
         agora = datetime.now(timezone.utc).replace(tzinfo=None)
