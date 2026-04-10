@@ -18,7 +18,7 @@ MONITORIZAR    = {448949606257131530}
 LISTA_NEGRA = {
     175668435240353792: "Caladinho, tu comes gordas"
 }
-FICHEIRO_TOTAL = "total_global.json"
+FICHEIRO_TOTAL = "/data/total_global.json"
 # ──────────────────────────────────────────
 
 intents = discord.Intents.default()
