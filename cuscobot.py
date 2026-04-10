@@ -206,6 +206,21 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
+    # ── !settotal ────────────────────────────────────────────────────────────────
+
+    elif message.content.lower().startswith("!settotal"):
+        partes = message.content.split()
+        if len(partes) != 2:
+            await message.channel.send("Uso: `!settotal <horas>`")
+            return
+        try:
+            horas = float(partes[1])
+            for uid in MONITORIZAR:
+                total_global[uid] = timedelta(hours=horas)
+            guardar_total()
+            await message.channel.send(f" Total atualizado para **{horas}h**!")
+        except ValueError:
+            await message.channel.send("❌ Valor inválido. Usa um número, ex: `!settotal 42.5`")
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
