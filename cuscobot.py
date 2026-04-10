@@ -206,6 +206,11 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
+    # ── !chatear ────────────────────────────────────────────────────────────────
+    elif message.content.lower() == "!chatear":
+        user = await bot.fetch_user(1121848584967569408)
+        await user.send("Mini manny, para de gritar")
+
     # ── !help ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!help":
         await message.channel.send(
