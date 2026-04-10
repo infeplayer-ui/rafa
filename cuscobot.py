@@ -3,6 +3,7 @@ from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 
@@ -15,9 +16,9 @@ RESUMO_HORA    = 22
 RESUMO_MINUTO  = 0
 MONITORIZAR    = {448949606257131530}
 LISTA_NEGRA = {
-    175335831899209728: "Caladinho, tens dois filhos",
-    175668435240353792: "Caladinho, tu comes gordas",
+    175668435240353792: "Caladinho, tu comes gordas"
 }
+FICHEIRO_TOTAL = "total_global.json"
 # ──────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -31,10 +32,30 @@ sessoes_ativas: dict[int, dict] = {}
 historico_hoje: dict[int, dict[str, timedelta]] = {}
 
 
+def carregar_total() -> dict[int, timedelta]:
+    if os.path.exists(FICHEIRO_TOTAL):
+        with open(FICHEIRO_TOTAL, "r") as f:
+            dados = json.load(f)
+            return {int(uid): timedelta(seconds=s) for uid, s in dados.items()}
+    return {}
+
+
+def guardar_total():
+    dados = {str(uid): td.total_seconds() for uid, td in total_global.items()}
+    with open(FICHEIRO_TOTAL, "w") as f:
+        json.dump(dados, f)
+
+
+# Carrega o total global do ficheiro ao arrancar
+total_global: dict[int, timedelta] = carregar_total()
+
+
 def adicionar_tempo(user_id: int, jogo: str, duracao: timedelta):
     if user_id not in historico_hoje:
         historico_hoje[user_id] = {}
     historico_hoje[user_id][jogo] = historico_hoje[user_id].get(jogo, timedelta()) + duracao
+    total_global[user_id] = total_global.get(user_id, timedelta()) + duracao
+    guardar_total()
 
 
 def formatar_duracao(td: timedelta) -> str:
@@ -66,6 +87,9 @@ def to_naive_utc(dt: datetime) -> datetime:
 @bot.event
 async def on_ready():
     print(f"✅  Bot ligado como {bot.user}")
+    print(f"📂  Total global carregado: {total_global}")
+
+    inicio_do_dia = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
     for guild in bot.guilds:
         for uid in MONITORIZAR:
@@ -75,6 +99,7 @@ async def on_ready():
                     if isinstance(activity, (discord.Game, discord.Activity)):
                         jogo   = activity.name
                         inicio = to_naive_utc(activity.start) if activity.start else datetime.now(timezone.utc).replace(tzinfo=None)
+                        inicio = max(inicio, inicio_do_dia)
                         sessoes_ativas[uid] = {"jogo": jogo, "inicio": inicio}
                         print(f"▶️  {membro.display_name} já está a jogar {jogo} desde {inicio}")
                         break
@@ -150,12 +175,13 @@ async def on_message(message: discord.Message):
             jogo       = sessao["jogo"]
             parcial    = agora - sessao["inicio"]
             total_hoje = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
-            horas      = total_hoje.total_seconds() / 3600
+            total_geral = total_global.get(uid, timedelta()) + parcial
+            horas_geral = total_geral.total_seconds() / 3600
 
-            livros   = horas / 6
-            filmes   = horas / 2
-            km       = horas * 5
-            trabalho = horas / 8
+            livros   = horas_geral / 6
+            filmes   = horas_geral / 2
+            km       = horas_geral * 5
+            trabalho = horas_geral / 8
 
             comparacoes = []
             if livros >= 0.1:
@@ -167,11 +193,12 @@ async def on_message(message: discord.Message):
             if trabalho >= 0.1:
                 comparacoes.append(f"💼 **{trabalho:.1f} dias** de trabalho full-time")
 
-            comp_str = "\nNesse tempo dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
+            comp_str = "\nCom o tempo total dava para:\n" + "\n".join(f"  • {c}" for c in comparacoes) if comparacoes else ""
 
             await canal.send(
-                f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}** "
-                f"(total hoje: **{formatar_duracao(total_hoje)}**) \n"
+                f"🎮 **{nome}** está a jogar **{jogo}** há **{formatar_duracao(parcial)}**\n"
+                f"📅 Total hoje: **{formatar_duracao(total_hoje)}**\n"
+                f"🏆 Total de sempre: **{formatar_duracao(total_geral)}**\n"
                 f"{comp_str}"
             )
 
