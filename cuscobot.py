@@ -127,7 +127,7 @@ async def on_message(message: discord.Message):
 
     # ── Lista negra ───────────────────────────────────────────────────────────
     if message.author.id in LISTA_NEGRA:
-        await message.channel.send("A ti não respondo 😏")
+        await message.channel.send("Caladinho, tens dois filhos")
         return
 
     # ── !check ────────────────────────────────────────────────────────────────
