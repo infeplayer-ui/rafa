@@ -206,6 +206,17 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
+    # ── !help ────────────────────────────────────────────────────────────────
+    elif message.content.lower() == "!help":
+        await message.channel.send(
+            "**📋 Comandos disponíveis:**\n\n"
+            "🎮 `!check` — vê as horas que já jogou na sessão atual, o total do dia e as comparações do tempo perdido 😄\n"
+            "🗑️ `!clear` — limpa todas as mensagens do canal\n"
+            "⚙️ `!settotal <horas>` — define manualmente o total de horas de sempre (ex: `!settotal 1048`)\n"
+            "🚨 `!alert` — manda uma DM ao Paiva a dizer que já chega de jogar\n"
+            "❓ `!help` — mostra esta mensagem\n"
+        )
+
     # ── !alert ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!alert":
         user = await bot.fetch_user(570368146310037555)
