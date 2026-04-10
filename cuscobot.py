@@ -206,6 +206,10 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
+    # ── !alert ────────────────────────────────────────────────────────────────
+    elif message.content.lower() == "!alert":
+        user = await bot.fetch_user(570368146310037555)
+        await user.send("Já chega de jogar maroto")
     # ── !settotal ────────────────────────────────────────────────────────────────
 
     elif message.content.lower().startswith("!settotal"):
