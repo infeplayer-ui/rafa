@@ -129,9 +129,10 @@ async def on_message(message: discord.Message):
         return
 
     # ── Lista negra ───────────────────────────────────────────────────────────
-   if message.author.id in LISTA_NEGRA:
-    await message.channel.send(LISTA_NEGRA[message.author.id])
-    return
+    if message.author.id in LISTA_NEGRA:
+        await message.channel.send(LISTA_NEGRA[message.author.id])
+        return
+
     # ── !check ────────────────────────────────────────────────────────────────
     if message.content.lower() == "!check":
         agora = datetime.now(timezone.utc).replace(tzinfo=None)
