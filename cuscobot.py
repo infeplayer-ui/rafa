@@ -7,13 +7,14 @@ import os
 load_dotenv()
 
 # ──────────────────────────────────────────
-#  CONFIGURAÇÃO  ←  edita aqui
+#  CONFIGURAÇÃO 
 # ──────────────────────────────────────────
 BOT_TOKEN      = os.getenv("BOT_TOKEN")
 CANAL_ID       = 1491902094603452589
 RESUMO_HORA    = 22
 RESUMO_MINUTO  = 0
 MONITORIZAR    = {448949606257131530}
+LISTA_NEGRA    = {175335831899209728} 
 # ──────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -124,6 +125,11 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # ── Lista negra ───────────────────────────────────────────────────────────
+    if message.author.id in LISTA_NEGRA:
+        await message.channel.send("A ti não respondo 😏")
+        return
+
     # ── !check ────────────────────────────────────────────────────────────────
     if message.content.lower() == "!check":
         agora = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -169,6 +175,7 @@ async def on_message(message: discord.Message):
     # ── !clear ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!clear":
         await message.channel.purge()
+
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
