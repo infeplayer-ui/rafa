@@ -1,6 +1,7 @@
 import discord
 from discord.ext import tasks
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import os
 import json
@@ -12,8 +13,9 @@ load_dotenv()
 # ──────────────────────────────────────────
 BOT_TOKEN      = os.getenv("BOT_TOKEN")
 CANAL_ID       = 1491902094603452589
-RESUMO_HORA    = 22
+RESUMO_HORA    = 0
 RESUMO_MINUTO  = 0
+TIMEZONE       = ZoneInfo("Europe/Lisbon")
 MONITORIZAR    = {448949606257131530}
 LISTA_NEGRA = {
     175668435240353792: "Caladinho, tu comes gordas"
@@ -89,7 +91,9 @@ async def on_ready():
     print(f"✅  Bot ligado como {bot.user}")
     print(f"📂  Total global carregado: {total_global}")
 
-    inicio_do_dia = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    # Início do dia em hora de Portugal, convertido para UTC sem timezone
+    agora_local   = datetime.now(TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_do_dia = agora_local.astimezone(timezone.utc).replace(tzinfo=None)
 
     for guild in bot.guilds:
         for uid in MONITORIZAR:
@@ -171,10 +175,10 @@ async def on_message(message: discord.Message):
                 await canal.send(f"**{nome}** não está a jogar nada agora.")
                 return
 
-            sessao     = sessoes_ativas[uid]
-            jogo       = sessao["jogo"]
-            parcial    = agora - sessao["inicio"]
-            total_hoje = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
+            sessao      = sessoes_ativas[uid]
+            jogo        = sessao["jogo"]
+            parcial     = agora - sessao["inicio"]
+            total_hoje  = historico_hoje.get(uid, {}).get(jogo, timedelta()) + parcial
             total_geral = total_global.get(uid, timedelta()) + parcial
             horas_geral = total_geral.total_seconds() / 3600
 
@@ -206,28 +210,7 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
-    # ── !chatear ────────────────────────────────────────────────────────────────
-    elif message.content.lower() == "!chatear":
-        user = await bot.fetch_user(1121848584967569408)
-        await user.send("Mini manny, para de gritar")
-
-    # ── !help ────────────────────────────────────────────────────────────────
-    elif message.content.lower() == "!help":
-        await message.channel.send(
-            "**📋 Comandos disponíveis:**\n\n"
-            "🎮 `!check` — vê as horas que já jogou na sessão atual, o total do dia e as comparações do tempo perdido 😄\n"
-            "🗑️ `!clear` — limpa todas as mensagens do canal\n"
-            "⚙️ `!settotal <horas>` — define manualmente o total de horas de sempre (ex: `!settotal 1048`)\n"
-            "🚨 `!alert` — manda uma DM ao Paiva a dizer que já chega de jogar\n"
-            "❓ `!help` — mostra esta mensagem\n"
-        )
-
-    # ── !alert ────────────────────────────────────────────────────────────────
-    elif message.content.lower() == "!alert":
-        user = await bot.fetch_user(570368146310037555)
-        await user.send("Já chega de jogar maroto")
-    # ── !settotal ────────────────────────────────────────────────────────────────
-
+    # ── !settotal ─────────────────────────────────────────────────────────────
     elif message.content.lower().startswith("!settotal"):
         partes = message.content.split()
         if len(partes) != 2:
@@ -238,9 +221,20 @@ async def on_message(message: discord.Message):
             for uid in MONITORIZAR:
                 total_global[uid] = timedelta(hours=horas)
             guardar_total()
-            await message.channel.send(f" Total atualizado para **{horas}h**!")
+            await message.channel.send(f"✅ Total atualizado para **{horas}h**!")
         except ValueError:
             await message.channel.send("❌ Valor inválido. Usa um número, ex: `!settotal 42.5`")
+
+    # ── !help ─────────────────────────────────────────────────────────────────
+    elif message.content.lower() == "!help":
+        await message.channel.send(
+            "**📋 Comandos disponíveis:**\n\n"
+            "🎮 `!check` — vê as horas que já jogou na sessão atual, o total do dia e as comparações do tempo perdido 😄\n"
+            "🗑️ `!clear` — limpa todas as mensagens do canal\n"
+            "⚙️ `!settotal <horas>` — define manualmente o total de horas de sempre (ex: `!settotal 1048`)\n"
+            "❓ `!help` — mostra esta mensagem\n"
+        )
+
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
@@ -272,9 +266,12 @@ async def notificacao_hora():
 
 @tasks.loop(minutes=1)
 async def resumo_diario():
-    agora = datetime.now(timezone.utc).replace(tzinfo=None)
-    if agora.hour != RESUMO_HORA or agora.minute != RESUMO_MINUTO:
+    # Compara com a hora de Portugal
+    agora_local = datetime.now(TIMEZONE)
+    if agora_local.hour != RESUMO_HORA or agora_local.minute != RESUMO_MINUTO:
         return
+
+    agora = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for uid, sessao in list(sessoes_ativas.items()):
         duracao = agora - sessao["inicio"]
