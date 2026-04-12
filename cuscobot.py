@@ -16,6 +16,7 @@ load_dotenv()
 BOT_TOKEN        = os.getenv("BOT_TOKEN")
 FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
 CANAL_ID         = 1491902094603452589
+CANAL_FUTEBOL_ID = 1492934881976516914
 RESUMO_HORA      = 0
 RESUMO_MINUTO    = 0
 TIMEZONE         = ZoneInfo("Europe/Lisbon")
@@ -25,7 +26,6 @@ LISTA_NEGRA = {
 }
 FICHEIRO_TOTAL = "/data/total_global.json"
 
-# Competições a monitorizar
 COMPETICOES = {
     "CL":  "🏆 Champions League",
     "EL":  "🟠 Europa League",
@@ -100,6 +100,15 @@ def to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
+def formatar_hora(utc_str: str) -> str:
+    try:
+        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        dt_local = dt.astimezone(TIMEZONE)
+        return dt_local.strftime("%H:%M")
+    except:
+        return "?"
+
+
 async def buscar_jogos_hoje() -> dict[str, list]:
     """Busca os jogos de hoje de todas as competições."""
     hoje = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
@@ -107,14 +116,14 @@ async def buscar_jogos_hoje() -> dict[str, list]:
 
     async with aiohttp.ClientSession() as session:
         for codigo, nome in COMPETICOES.items():
-            url = f"https://api.football-data.org/v4/competitions/{codigo}/matches"
+            url     = f"https://api.football-data.org/v4/competitions/{codigo}/matches"
             headers = {"X-Auth-Token": FOOTBALL_API_KEY}
             params  = {"dateFrom": hoje, "dateTo": hoje}
 
             try:
                 async with session.get(url, headers=headers, params=params) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        data  = await resp.json()
                         jogos = data.get("matches", [])
                         if jogos:
                             resultado[nome] = jogos
@@ -124,24 +133,16 @@ async def buscar_jogos_hoje() -> dict[str, list]:
     return resultado
 
 
-def formatar_hora(utc_str: str) -> str:
-    """Converte hora UTC da API para hora de Portugal."""
-    try:
-        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-        dt_local = dt.astimezone(TIMEZONE)
-        return dt_local.strftime("%H:%M")
-    except:
-        return "?"
-
-
 def gerar_aposta_single(jogos_flat: list) -> str:
-    """Gera uma sugestão de aposta simples."""
-    if not jogos_flat:
-        return "Não há jogos suficientes para gerar apostas."
+    # Só jogos que ainda não começaram
+    jogos_futuros = [j for j in jogos_flat if j.get("status") == "TIMED" or j.get("status") == "SCHEDULED"]
+    if not jogos_futuros:
+        return "Não há jogos futuros suficientes para gerar uma aposta."
 
-    jogo = random.choice(jogos_flat)
+    jogo  = random.choice(jogos_futuros)
     casa  = jogo["homeTeam"]["shortName"]
     fora  = jogo["awayTeam"]["shortName"]
+    hora  = formatar_hora(jogo["utcDate"])
     opcoes = [
         (f"Vitória do **{casa}**", round(random.uniform(1.5, 3.5), 2)),
         (f"Empate", round(random.uniform(2.8, 4.0), 2)),
@@ -151,7 +152,6 @@ def gerar_aposta_single(jogos_flat: list) -> str:
         (f"Menos de 2.5 golos", round(random.uniform(1.5, 2.0), 2)),
     ]
     escolha, odd = random.choice(opcoes)
-    hora = formatar_hora(jogo["utcDate"])
 
     return (
         f"🎯 **Aposta Single**\n"
@@ -162,13 +162,13 @@ def gerar_aposta_single(jogos_flat: list) -> str:
 
 
 def gerar_aposta_multipla(jogos_flat: list, n: int = 3) -> str:
-    """Gera uma sugestão de aposta múltipla."""
-    if len(jogos_flat) < n:
-        n = len(jogos_flat)
-    if n == 0:
-        return "Não há jogos suficientes para gerar uma múltipla."
+    # Só jogos que ainda não começaram
+    jogos_futuros = [j for j in jogos_flat if j.get("status") == "TIMED" or j.get("status") == "SCHEDULED"]
+    if not jogos_futuros:
+        return "Não há jogos futuros suficientes para gerar uma múltipla."
 
-    selecionados = random.sample(jogos_flat, n)
+    n = min(n, len(jogos_futuros))
+    selecionados = random.sample(jogos_futuros, n)
     linhas = [f"🎯 **Aposta Múltipla ({n} jogos)**\n"]
     odd_total = 1.0
 
@@ -311,6 +311,10 @@ async def on_message(message: discord.Message):
 
     # ── !jogos ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!jogos":
+        if message.channel.id != CANAL_FUTEBOL_ID:
+            await message.channel.send(f"⚽ Este comando só funciona em <#{CANAL_FUTEBOL_ID}>!")
+            return
+
         await message.channel.send("⏳ A buscar jogos de hoje...")
         jogos_por_comp = await buscar_jogos_hoje()
 
@@ -321,15 +325,15 @@ async def on_message(message: discord.Message):
         for comp, jogos in jogos_por_comp.items():
             linhas = [f"**{comp}**"]
             for j in jogos:
-                casa  = j["homeTeam"]["shortName"]
-                fora  = j["awayTeam"]["shortName"]
-                hora  = formatar_hora(j["utcDate"])
+                casa   = j["homeTeam"]["shortName"]
+                fora   = j["awayTeam"]["shortName"]
+                hora   = formatar_hora(j["utcDate"])
                 estado = j.get("status", "")
                 if estado == "FINISHED":
                     g_casa = j["score"]["fullTime"]["home"]
                     g_fora = j["score"]["fullTime"]["away"]
                     linhas.append(f"  ✅ {casa} **{g_casa} - {g_fora}** {fora}")
-                elif estado == "IN_PLAY" or estado == "PAUSED":
+                elif estado in ("IN_PLAY", "PAUSED"):
                     g_casa = j["score"]["fullTime"]["home"] or 0
                     g_fora = j["score"]["fullTime"]["away"] or 0
                     linhas.append(f"  🔴 {casa} **{g_casa} - {g_fora}** {fora} *(a decorrer)*")
@@ -339,11 +343,13 @@ async def on_message(message: discord.Message):
 
     # ── !aposta ───────────────────────────────────────────────────────────────
     elif message.content.lower().startswith("!aposta"):
+        if message.channel.id != CANAL_FUTEBOL_ID:
+            await message.channel.send(f"⚽ Este comando só funciona em <#{CANAL_FUTEBOL_ID}>!")
+            return
+
         await message.channel.send("⏳ A gerar sugestão de aposta...")
         jogos_por_comp = await buscar_jogos_hoje()
-
-        # Junta todos os jogos numa lista plana
-        jogos_flat = [j for jogos in jogos_por_comp.values() for j in jogos]
+        jogos_flat     = [j for jogos in jogos_por_comp.values() for j in jogos]
 
         partes = message.content.lower().split()
         tipo   = partes[1] if len(partes) > 1 else "multipla"
@@ -358,7 +364,7 @@ async def on_message(message: discord.Message):
     elif message.content.lower() == "!clear":
         await message.channel.purge()
 
-    # ── !chatear ────────────────────────────────────────────────────────────────
+    # ── !chatear ──────────────────────────────────────────────────────────────
     elif message.content.lower() == "!chatear":
         user = await bot.fetch_user(1121848584967569408)
         await user.send("Mini manny, para de gritar")
@@ -387,19 +393,25 @@ async def on_message(message: discord.Message):
 
     # ── !help ─────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!help":
-        await message.channel.send(
-            "**📋 Comandos disponíveis:**\n\n"
-            "🎮 `!check` — vê as horas que já jogou na sessão atual, o total do dia e as comparações do tempo perdido 😄\n"
-            "⚽ `!jogos` — mostra todos os jogos de hoje nas principais competições\n"
-            "🎲 `!aposta multipla [n]` — gera uma sugestão de aposta múltipla (ex: `!aposta multipla 4`)\n"
-            "🎲 `!aposta single` — gera uma sugestão de aposta simples\n"
-            "🗑️ `!clear` — limpa todas as mensagens do canal\n"
-            "⚙️ `!settotal <horas>` — define manualmente o total de horas de sempre (ex: `!settotal 1048`)\n"
-            "🚨 `!alert` — manda uma DM ao Paiva a dizer que já chega de jogar\n"
-            "📢 `!chatear` — manda uma DM ao Mini manny a dizer para parar de gritar\n"
-            "❓ `!help` — mostra esta mensagem\n"
-        )
-
+        if message.channel.id == CANAL_FUTEBOL_ID:
+            await message.channel.send(
+                "**📋 Comandos disponíveis:**\n\n"
+                "⚽ `!jogos` — mostra todos os jogos de hoje nas principais competições\n"
+                "🎲 `!aposta multipla [n]` — gera uma aposta múltipla (ex: `!aposta multipla 4`)\n"
+                "🎲 `!aposta single` — gera uma aposta simples\n"
+                "🗑️ `!clear` — limpa todas as mensagens do canal\n"
+                "❓ `!help` — mostra esta mensagem\n"
+            )
+        else:
+            await message.channel.send(
+                "**📋 Comandos disponíveis:**\n\n"
+                "🎮 `!check` — vê as horas que já jogou na sessão atual, o total do dia e as comparações do tempo perdido 😄\n"
+                "🗑️ `!clear` — limpa todas as mensagens do canal\n"
+                "⚙️ `!settotal <horas>` — define manualmente o total de horas de sempre (ex: `!settotal 1048`)\n"
+                "🚨 `!alert` — manda uma DM ao Paiva a dizer que já chega de jogar\n"
+                "📢 `!chatear` — manda uma DM ao Mini manny a dizer para parar de gritar\n"
+                "❓ `!help` — mostra esta mensagem\n"
+            )
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
