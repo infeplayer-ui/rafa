@@ -11,10 +11,11 @@ import aiohttp
 load_dotenv()
 
 # ──────────────────────────────────────────
-#  CONFIGURAÇÃO 
+#  CONFIGURAÇÃO
 # ──────────────────────────────────────────
 BOT_TOKEN        = os.getenv("BOT_TOKEN")
 FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
+ODDS_API_KEY     = os.getenv("ODDS_API_KEY")
 CANAL_ID         = 1491902094603452589
 CANAL_FUTEBOL_ID = 1492934881976516914
 RESUMO_HORA      = 0
@@ -26,6 +27,7 @@ LISTA_NEGRA = {
 }
 FICHEIRO_TOTAL = "/data/total_global.json"
 
+# Competições football-data.org
 COMPETICOES = {
     "CL":  "🏆 Champions League",
     "EL":  "🟠 Europa League",
@@ -36,6 +38,18 @@ COMPETICOES = {
     "FL1": "🇫🇷 Ligue 1",
     "PD":  "🇪🇸 La Liga",
 }
+
+# Competições The Odds API
+ODDS_SPORTS = [
+    "soccer_uefa_champs_league",
+    "soccer_uefa_europa_league",
+    "soccer_uefa_europa_conference_league",
+    "soccer_epl",
+    "soccer_portugal_primeira_liga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
+    "soccer_spain_la_liga",
+]
 # ──────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -103,23 +117,20 @@ def to_naive_utc(dt: datetime) -> datetime:
 def formatar_hora(utc_str: str) -> str:
     try:
         dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-        dt_local = dt.astimezone(TIMEZONE)
-        return dt_local.strftime("%H:%M")
+        return dt.astimezone(TIMEZONE).strftime("%H:%M")
     except:
         return "?"
 
 
 async def buscar_jogos_hoje() -> dict[str, list]:
-    """Busca os jogos de hoje de todas as competições."""
+    """Busca jogos de hoje via football-data.org."""
     hoje = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
     resultado = {}
-
     async with aiohttp.ClientSession() as session:
         for codigo, nome in COMPETICOES.items():
             url     = f"https://api.football-data.org/v4/competitions/{codigo}/matches"
             headers = {"X-Auth-Token": FOOTBALL_API_KEY}
             params  = {"dateFrom": hoje, "dateTo": hoje}
-
             try:
                 async with session.get(url, headers=headers, params=params) as resp:
                     if resp.status == 200:
@@ -129,67 +140,177 @@ async def buscar_jogos_hoje() -> dict[str, list]:
                             resultado[nome] = jogos
             except Exception as e:
                 print(f"Erro a buscar {codigo}: {e}")
+    return resultado
+
+
+async def buscar_odds_hoje() -> list[dict]:
+    """
+    Busca odds reais de hoje via The Odds API.
+    Devolve lista de jogos com odds h2h (1X2).
+    Cada item: { casa, fora, hora, odds: {casa: float, empate: float, fora: float} }
+    """
+    agora     = datetime.now(timezone.utc)
+    hoje_fim  = agora.replace(hour=23, minute=59, second=59)
+    resultado = []
+
+    async with aiohttp.ClientSession() as session:
+        for sport in ODDS_SPORTS:
+            url    = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
+            params = {
+                "apiKey":  ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h",
+                "oddsFormat": "decimal",
+            }
+            try:
+                async with session.get(url, params=params) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    for jogo in data:
+                        # Filtra apenas jogos de hoje
+                        try:
+                            commence = datetime.fromisoformat(
+                                jogo["commence_time"].replace("Z", "+00:00")
+                            ).astimezone(timezone.utc).replace(tzinfo=None)
+                        except:
+                            continue
+
+                        agora_naive   = agora.replace(tzinfo=None)
+                        hoje_fim_naive = hoje_fim.replace(tzinfo=None)
+
+                        if not (agora_naive <= commence <= hoje_fim_naive):
+                            continue
+
+                        # Extrai odds da primeira bookmaker disponível
+                        bookmakers = jogo.get("bookmakers", [])
+                        if not bookmakers:
+                            continue
+
+                        odds_raw = {}
+                        for bm in bookmakers:
+                            for market in bm.get("markets", []):
+                                if market["key"] == "h2h":
+                                    for outcome in market["outcomes"]:
+                                        odds_raw[outcome["name"]] = outcome["price"]
+                                    break
+                            if odds_raw:
+                                break
+
+                        if len(odds_raw) < 2:
+                            continue
+
+                        home_team = jogo["home_team"]
+                        away_team = jogo["away_team"]
+                        hora      = formatar_hora(jogo["commence_time"])
+
+                        odd_casa   = odds_raw.get(home_team)
+                        odd_fora   = odds_raw.get(away_team)
+                        odd_empate = None
+                        for k, v in odds_raw.items():
+                            if k not in (home_team, away_team):
+                                odd_empate = v
+                                break
+
+                        resultado.append({
+                            "casa":  home_team,
+                            "fora":  away_team,
+                            "hora":  hora,
+                            "odds": {
+                                "casa":   odd_casa,
+                                "empate": odd_empate,
+                                "fora":   odd_fora,
+                            }
+                        })
+            except Exception as e:
+                print(f"Erro odds {sport}: {e}")
 
     return resultado
 
 
-def gerar_aposta_single(jogos_flat: list) -> str:
-    # Só jogos que ainda não começaram
-    jogos_futuros = [j for j in jogos_flat if j.get("status") == "TIMED" or j.get("status") == "SCHEDULED"]
-    if not jogos_futuros:
-        return "Não há jogos futuros suficientes para gerar uma aposta."
+def selecoes_possiveis(jogo: dict, max_odd: float | None) -> list[tuple[str, float]]:
+    """Devolve lista de (descrição, odd) possíveis para um jogo, filtradas por max_odd."""
+    odds  = jogo["odds"]
+    casa  = jogo["casa"]
+    fora  = jogo["fora"]
+    opcoes = []
+    if odds.get("casa"):
+        opcoes.append((f"Vitória **{casa}**", odds["casa"]))
+    if odds.get("empate"):
+        opcoes.append(("Empate", odds["empate"]))
+    if odds.get("fora"):
+        opcoes.append((f"Vitória **{fora}**", odds["fora"]))
 
-    jogo  = random.choice(jogos_futuros)
-    casa  = jogo["homeTeam"]["shortName"]
-    fora  = jogo["awayTeam"]["shortName"]
-    hora  = formatar_hora(jogo["utcDate"])
-    opcoes = [
-        (f"Vitória do **{casa}**", round(random.uniform(1.5, 3.5), 2)),
-        (f"Empate", round(random.uniform(2.8, 4.0), 2)),
-        (f"Vitória do **{fora}**", round(random.uniform(1.5, 3.5), 2)),
-        (f"Ambas marcam — Sim", round(random.uniform(1.6, 2.2), 2)),
-        (f"Mais de 2.5 golos", round(random.uniform(1.6, 2.4), 2)),
-        (f"Menos de 2.5 golos", round(random.uniform(1.5, 2.0), 2)),
-    ]
-    escolha, odd = random.choice(opcoes)
+    if max_odd is not None:
+        opcoes = [(d, o) for d, o in opcoes if o <= max_odd]
+    return opcoes
 
+
+def gerar_aposta_single(jogos: list[dict], max_odd: float | None) -> str:
+    candidatos = []
+    for jogo in jogos:
+        for descricao, odd in selecoes_possiveis(jogo, max_odd):
+            candidatos.append((jogo, descricao, odd))
+
+    if not candidatos:
+        limite = f" com odd ≤ {max_odd}" if max_odd else ""
+        return f"❌ Não há seleções disponíveis{limite}."
+
+    jogo, descricao, odd = random.choice(candidatos)
     return (
         f"🎯 **Aposta Single**\n"
-        f"⚽ {casa} vs {fora} ({hora})\n"
-        f"📌 {escolha}\n"
+        f"⚽ **{jogo['casa']}** vs **{jogo['fora']}** ({jogo['hora']})\n"
+        f"📌 {descricao}\n"
         f"💰 Odd: **{odd}**"
     )
 
 
-def gerar_aposta_multipla(jogos_flat: list, n: int = 3) -> str:
-    # Só jogos que ainda não começaram
-    jogos_futuros = [j for j in jogos_flat if j.get("status") == "TIMED" or j.get("status") == "SCHEDULED"]
-    if not jogos_futuros:
-        return "Não há jogos futuros suficientes para gerar uma múltipla."
+def gerar_aposta_multipla(jogos: list[dict], n: int, max_odd_total: float | None) -> str:
+    if not jogos:
+        return "❌ Não há jogos disponíveis para gerar uma múltipla."
 
-    n = min(n, len(jogos_futuros))
-    selecionados = random.sample(jogos_futuros, n)
-    linhas = [f"🎯 **Aposta Múltipla ({n} jogos)**\n"]
-    odd_total = 1.0
+    # Máximo tentativas para respeitar a odd total
+    for _ in range(200):
+        if len(jogos) < n:
+            selecionados = jogos[:]
+        else:
+            selecionados = random.sample(jogos, n)
 
-    for jogo in selecionados:
-        casa  = jogo["homeTeam"]["shortName"]
-        fora  = jogo["awayTeam"]["shortName"]
-        hora  = formatar_hora(jogo["utcDate"])
-        opcoes = [
-            (f"Vitória {casa}", round(random.uniform(1.5, 3.5), 2)),
-            (f"Empate", round(random.uniform(2.8, 4.0), 2)),
-            (f"Vitória {fora}", round(random.uniform(1.5, 3.5), 2)),
-            (f"Ambas marcam", round(random.uniform(1.6, 2.2), 2)),
-            (f"+2.5 golos", round(random.uniform(1.6, 2.4), 2)),
-            (f"-2.5 golos", round(random.uniform(1.5, 2.0), 2)),
-        ]
-        escolha, odd = random.choice(opcoes)
-        odd_total *= odd
-        linhas.append(f"⚽ {casa} vs {fora} ({hora}) → {escolha} @ **{odd}**")
+        linhas    = []
+        odd_total = 1.0
+        valido    = True
 
-    linhas.append(f"\n💰 Odd total: **{round(odd_total, 2)}**")
-    return "\n".join(linhas)
+        for jogo in selecionados:
+            opcoes = selecoes_possiveis(jogo, None)
+            if not opcoes:
+                valido = False
+                break
+            descricao, odd = random.choice(opcoes)
+            odd_total *= odd
+            linhas.append(
+                f"⚽ **{jogo['casa']}** vs **{jogo['fora']}** ({jogo['hora']}) "
+                f"→ {descricao} @ **{odd}**"
+            )
+
+        if not valido:
+            continue
+        if max_odd_total is not None and odd_total > max_odd_total:
+            continue
+
+        num_real = len(selecionados)
+        aviso = ""
+        if num_real < n:
+            aviso = f"\n⚠️ Só havia **{num_real}** jogos disponíveis hoje."
+
+        return (
+            f"🎯 **Aposta Múltipla ({num_real} jogos)**\n\n"
+            + "\n".join(linhas)
+            + f"\n\n💰 Odd total: **{round(odd_total, 2)}**"
+            + aviso
+        )
+
+    limite = f" com odd total ≤ {max_odd_total}" if max_odd_total else ""
+    return f"❌ Não foi possível gerar uma múltipla{limite}. Tenta com uma odd mais alta."
 
 
 @bot.event
@@ -249,7 +370,6 @@ async def on_presence_update(before: discord.Member, after: discord.Member):
                 if activity.start:
                     inicio = to_naive_utc(activity.start)
                 break
-
         sessoes_ativas[uid] = {"jogo": jogo_novo, "inicio": inicio}
         if canal:
             await canal.send(f"🟢 **{nome}** começou a jogar **{jogo_novo}**!")
@@ -260,7 +380,6 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # ── Lista negra ───────────────────────────────────────────────────────────
     if message.author.id in LISTA_NEGRA:
         await message.channel.send(LISTA_NEGRA[message.author.id])
         return
@@ -347,18 +466,42 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"⚽ Este comando só funciona em <#{CANAL_FUTEBOL_ID}>!")
             return
 
-        await message.channel.send("⏳ A gerar sugestão de aposta...")
-        jogos_por_comp = await buscar_jogos_hoje()
-        jogos_flat     = [j for jogos in jogos_por_comp.values() for j in jogos]
+        partes = message.content.split()
+        # !aposta single [max_odd]
+        # !aposta multipla [n] [max_odd_total]
 
-        partes = message.content.lower().split()
-        tipo   = partes[1] if len(partes) > 1 else "multipla"
+        await message.channel.send("⏳ A ir buscar odds reais...")
+        jogos = await buscar_odds_hoje()
+
+        if not jogos:
+            await message.channel.send("❌ Não foi possível obter odds para hoje. Tenta mais tarde.")
+            return
+
+        tipo = partes[1].lower() if len(partes) > 1 else "multipla"
 
         if tipo == "single":
-            await message.channel.send(gerar_aposta_single(jogos_flat))
-        else:
-            n = int(partes[2]) if len(partes) > 2 and partes[2].isdigit() else 3
-            await message.channel.send(gerar_aposta_multipla(jogos_flat, n))
+            max_odd = None
+            if len(partes) > 2:
+                try:
+                    max_odd = float(partes[2])
+                except ValueError:
+                    pass
+            await message.channel.send(gerar_aposta_single(jogos, max_odd))
+
+        else:  # multipla
+            n = 3
+            max_odd_total = None
+            if len(partes) > 2:
+                try:
+                    n = int(partes[2])
+                except ValueError:
+                    pass
+            if len(partes) > 3:
+                try:
+                    max_odd_total = float(partes[3])
+                except ValueError:
+                    pass
+            await message.channel.send(gerar_aposta_multipla(jogos, n, max_odd_total))
 
     # ── !clear ────────────────────────────────────────────────────────────────
     elif message.content.lower() == "!clear":
@@ -396,9 +539,11 @@ async def on_message(message: discord.Message):
         if message.channel.id == CANAL_FUTEBOL_ID:
             await message.channel.send(
                 "**📋 Comandos disponíveis:**\n\n"
-                "⚽ `!jogos` — mostra todos os jogos de hoje nas principais competições\n"
-                "🎲 `!aposta multipla [n]` — gera uma aposta múltipla (ex: `!aposta multipla 4`)\n"
-                "🎲 `!aposta single` — gera uma aposta simples\n"
+                "⚽ `!jogos` — mostra todos os jogos de hoje\n"
+                "🎲 `!aposta single [odd_max]` — aposta simples com odds reais\n"
+                "   ex: `!aposta single 2.5` — só seleções com odd ≤ 2.5\n"
+                "🎲 `!aposta multipla [n] [odd_total_max]` — aposta múltipla com odds reais\n"
+                "   ex: `!aposta multipla 4 10.0` — 4 jogos com odd total ≤ 10\n"
                 "🗑️ `!clear` — limpa todas as mensagens do canal\n"
                 "❓ `!help` — mostra esta mensagem\n"
             )
@@ -412,6 +557,7 @@ async def on_message(message: discord.Message):
                 "📢 `!chatear` — manda uma DM ao Mini manny a dizer para parar de gritar\n"
                 "❓ `!help` — mostra esta mensagem\n"
             )
+
 
 @tasks.loop(minutes=60)
 async def notificacao_hora():
